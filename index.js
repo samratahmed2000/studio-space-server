@@ -31,6 +31,11 @@ app.get("/categories", async (req, res) => {
   res.send(result);
 });
 
+app.get("/studios", async (req, res) => {
+  const result = await studioCollection.find().toArray();
+  res.send(result);
+});
+
 app.post("/add-studio", async (req, res) => {
   const data = req.body;
   const result = await studioCollection.insertOne(data);
