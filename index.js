@@ -86,6 +86,12 @@ app.get("/my-bookings", async (req, res) => {
   res.send(result);
 });
 
+app.delete("/my-bookings", async (req, res) => {
+  const { id } = req.params;
+  const result = await bookingCollection.deleteOne({ _id: id });
+  res.send(result);
+});
+
 app.get("/", (req, res) => {
   res.send({ message: "Server is running" });
 });
