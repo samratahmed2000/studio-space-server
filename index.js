@@ -24,9 +24,16 @@ app.use(express.json());
 const connectedClient = await connectToMongoDB();
 const db = connectedClient.db("studioSpace");
 const categoryCollection = db.collection("categories");
+const studioCollection = db.collection("studios");
 
 app.get("/categories", async (req, res) => {
   const result = await categoryCollection.find().toArray();
+  res.send(result);
+});
+
+app.post("/add-studio", async (req, res) => {
+  const data = req.body;
+  const result = await studioCollection.insertOne(data);
   res.send(result);
 });
 
