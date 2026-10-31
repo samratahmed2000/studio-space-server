@@ -22,6 +22,13 @@ app.use(cors());
 app.use(express.json());
 
 const connectedClient = await connectToMongoDB();
+const db = connectedClient.db("studioSpace");
+const categoryCollection = db.collection("categories");
+
+app.get("/categories", async (req, res) => {
+  const result = await categoryCollection.find().toArray();
+  res.send(result);
+});
 
 app.get("/", (req, res) => {
   res.send({ message: "Server is running" });
