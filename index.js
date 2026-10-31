@@ -61,6 +61,12 @@ app.patch("/studios/:id", async (req, res) => {
   res.json(result);
 });
 
+app.delete("/studios/:id", async (req, res) => {
+  const { id } = req.params;
+  const result = await studioCollection.deleteOne({ _id: new ObjectId(id) });
+  res.json(result);
+});
+
 app.post("/add-studio", async (req, res) => {
   const data = req.body;
   const result = await studioCollection.insertOne(data);
