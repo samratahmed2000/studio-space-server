@@ -51,6 +51,16 @@ app.get("/studios/:id", async (req, res) => {
   res.send(result);
 });
 
+app.patch("/studios/:id", async (req, res) => {
+  const { id } = req.params;
+  const data = req.body;
+  const result = await studioCollection.updateOne(
+    { _id: new ObjectId(id) },
+    { $set: data },
+  );
+  res.json(result);
+});
+
 app.post("/add-studio", async (req, res) => {
   const data = req.body;
   const result = await studioCollection.insertOne(data);
