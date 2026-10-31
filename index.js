@@ -36,6 +36,15 @@ app.get("/studios", async (req, res) => {
   res.send(result);
 });
 
+app.get("/featured-studios", async (req, res) => {
+  const result = await studioCollection
+    .find()
+    .sort({ rating: -1 })
+    .limit(6)
+    .toArray();
+  res.send(result);
+});
+
 app.post("/add-studio", async (req, res) => {
   const data = req.body;
   const result = await studioCollection.insertOne(data);
