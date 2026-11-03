@@ -46,7 +46,7 @@ app.get("/studios", async (req, res) => {
 app.get("/featured-studios", async (req, res) => {
   const result = await studioCollection
     .find()
-    .sort({ rating: -1 })
+    .sort({ hourlyRate: -1 })
     .limit(6)
     .toArray();
   res.send(result);
@@ -99,3 +99,5 @@ app.get("/", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server is running successfully on ${PORT}`);
 });
+
+export default app;
