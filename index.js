@@ -76,6 +76,23 @@ app.delete("/studios/:id", async (req, res) => {
 
 app.post("/booking", async (req, res) => {
   const data = req.body;
+  const overlappingBooking = await bookingCollection.findOne({
+    studioId: data.studioId,
+    bookingDate: data.bookingDate,
+    $expr: {
+      $and: [
+        { $lt: ["$startTime", data.endTime] },
+        { $gt: ["$endTime", data.startTime] },
+      ],
+    },
+  });
+
+  if (overlappingBooking) {
+    return res.status(409).send({
+      message: "This studio is already booked for the selected time.",
+    });
+  }
+
   const result = await bookingCollection.insertOne(data);
   res.send(result);
 });
