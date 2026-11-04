@@ -27,6 +27,7 @@ const db = connectedClient.db("studioSpace");
 const categoryCollection = db.collection("categories");
 const studioCollection = db.collection("studios");
 const bookingCollection = db.collection("bookings");
+const savedStudioCollection = db.collection("wishlist");
 
 // Middleware
 const verifyToken = async (req, res, next) => {
@@ -44,7 +45,8 @@ const verifyToken = async (req, res, next) => {
   );
 
   try {
-    await jwtVerify(token, JWKS);
+    const { payload } = await jwtVerify(token, JWKS);
+    req.user = payload;
     next();
   } catch (error) {
     return res.status(401).send({ message: "Invalid or Expired Token." });
@@ -141,6 +143,85 @@ app.patch("/my-bookings/:id", verifyToken, async (req, res) => {
 app.delete("/my-bookings/:id", verifyToken, async (req, res) => {
   const { id } = req.params;
   const result = await bookingCollection.deleteOne({ _id: new ObjectId(id) });
+  res.send(result);
+});
+
+app.post("/studio-wishlist", verifyToken, async (req, res) => {
+  const email = req.user?.email;
+  const studioId = String(req.body?.studioId ?? "");
+
+  if (!email) {
+    return res.status(401).send({ message: "Unauthorized!" });
+  }
+
+  if (!studioId || !ObjectId.isValid(studioId)) {
+    return res.status(400).send({ message: "A valid studioId is required." });
+  }
+
+  const studio = await studioCollection.findOne({
+    _id: new ObjectId(studioId),
+  });
+
+  if (!studio) {
+    return res.status(404).send({ message: "Studio not found." });
+  }
+
+  const existing = await savedStudioCollection.findOne({ email, studioId });
+
+  if (existing) {
+    return res.send({ ...existing, studio, alreadySaved: true });
+  }
+
+  const result = await savedStudioCollection.insertOne({
+    email,
+    studioId,
+    createdAt: new Date().toISOString(),
+  });
+
+  res.status(201).send({ ...result, studio });
+});
+
+app.get("/studio-wishlist", verifyToken, async (req, res) => {
+  const email = req.user?.email;
+
+  if (!email) {
+    return res.status(401).send({ message: "Unauthorized!" });
+  }
+
+  const saved = await savedStudioCollection
+    .find({ email })
+    .sort({ createdAt: -1 })
+    .toArray();
+
+  const studioIds = saved
+    .map((item) => item.studioId)
+    .filter((id) => ObjectId.isValid(id))
+    .map((id) => new ObjectId(id));
+
+  const studios = await studioCollection
+    .find({ _id: { $in: studioIds } })
+    .toArray();
+
+  const studioMap = new Map(
+    studios.map((studio) => [studio._id.toString(), studio]),
+  );
+
+  res.send(
+    saved
+      .map((item) => studioMap.get(item.studioId?.toString()))
+      .filter(Boolean),
+  );
+});
+
+app.delete("/studio-wishlist/:studioId", verifyToken, async (req, res) => {
+  const email = req.user?.email;
+  const studioId = String(req.params.studioId);
+
+  if (!email) {
+    return res.status(401).send({ message: "Unauthorized!" });
+  }
+
+  const result = await savedStudioCollection.deleteOne({ email, studioId });
   res.send(result);
 });
 
