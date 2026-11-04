@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import "dotenv/config";
 import { MongoClient, ObjectId } from "mongodb";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 
 const app = express();
 const PORT = process.env.PORT || 8000;
@@ -27,12 +28,35 @@ const categoryCollection = db.collection("categories");
 const studioCollection = db.collection("studios");
 const bookingCollection = db.collection("bookings");
 
+// Middleware
+const verifyToken = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    return res.status(401).send({ message: "Unauthorized!" });
+  }
+  const token = authHeader.split(" ")[1];
+  if (!token) {
+    return res.status(401).send({ message: "Unauthorized!" });
+  }
+
+  const JWKS = createRemoteJWKSet(
+    new URL(`${process.env.CLIENT_URL}/api/auth/jwks`),
+  );
+
+  try {
+    await jwtVerify(token, JWKS);
+    next();
+  } catch (error) {
+    return res.status(401).send({ message: "Invalid or Expired Token." });
+  }
+};
+
 app.get("/categories", async (req, res) => {
   const result = await categoryCollection.find().toArray();
   res.send(result);
 });
 
-app.post("/add-studio", async (req, res) => {
+app.post("/add-studio", verifyToken, async (req, res) => {
   const data = req.body;
   const result = await studioCollection.insertOne(data);
   res.send(result);
@@ -58,7 +82,7 @@ app.get("/studios/:id", async (req, res) => {
   res.send(result);
 });
 
-app.patch("/studios/:id", async (req, res) => {
+app.patch("/studios/:id", verifyToken, async (req, res) => {
   const { id } = req.params;
   const data = req.body;
   const result = await studioCollection.updateOne(
@@ -68,17 +92,18 @@ app.patch("/studios/:id", async (req, res) => {
   res.json(result);
 });
 
-app.delete("/studios/:id", async (req, res) => {
+app.delete("/studios/:id", verifyToken, async (req, res) => {
   const { id } = req.params;
   const result = await studioCollection.deleteOne({ _id: new ObjectId(id) });
   res.json(result);
 });
 
-app.post("/booking", async (req, res) => {
+app.post("/booking", verifyToken, async (req, res) => {
   const data = req.body;
-  const overlappingBooking = await bookingCollection.findOne({
+  const booking = await bookingCollection.findOne({
     studioId: data.studioId,
     bookingDate: data.bookingDate,
+    status: { $ne: "cancelled" },
     $expr: {
       $and: [
         { $lt: ["$startTime", data.endTime] },
@@ -87,7 +112,7 @@ app.post("/booking", async (req, res) => {
     },
   });
 
-  if (overlappingBooking) {
+  if (booking) {
     return res.status(409).send({
       message: "This studio is already booked for the selected time.",
     });
@@ -97,13 +122,23 @@ app.post("/booking", async (req, res) => {
   res.send(result);
 });
 
-app.get("/my-bookings/:email", async (req, res) => {
+app.get("/my-bookings/:email", verifyToken, async (req, res) => {
   const { email } = req.params;
   const result = await bookingCollection.find({ email: email }).toArray();
   res.send(result);
 });
 
-app.delete("/my-bookings/:id", async (req, res) => {
+app.patch("/my-bookings/:id", verifyToken, async (req, res) => {
+  const { id } = req.params;
+  const data = req.body;
+  const result = await bookingCollection.updateOne(
+    { _id: new ObjectId(id) },
+    { $set: data },
+  );
+  res.json(result);
+});
+
+app.delete("/my-bookings/:id", verifyToken, async (req, res) => {
   const { id } = req.params;
   const result = await bookingCollection.deleteOne({ _id: new ObjectId(id) });
   res.send(result);
