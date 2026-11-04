@@ -29,6 +29,9 @@ const studioCollection = db.collection("studios");
 const bookingCollection = db.collection("bookings");
 const savedStudioCollection = db.collection("wishlist");
 
+const escapeRegex = (value) =>
+  String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 // Middleware
 const verifyToken = async (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -59,13 +62,43 @@ app.get("/categories", async (req, res) => {
 });
 
 app.post("/add-studio", verifyToken, async (req, res) => {
-  const data = req.body;
+  const email = String(req.user?.email ?? "")
+    .trim()
+    .toLowerCase();
+
+  if (!email) {
+    return res.status(401).send({ message: "Unauthorized!" });
+  }
+
+  const data = {
+    ...req.body,
+    hostEmail: email,
+    hostName: req.user?.name || req.body?.hostName,
+  };
+
   const result = await studioCollection.insertOne(data);
   res.send(result);
 });
 
 app.get("/studios", async (req, res) => {
   const result = await studioCollection.find().toArray();
+  res.send(result);
+});
+
+app.get("/my-studios", verifyToken, async (req, res) => {
+  const email = String(req.user?.email ?? "")
+    .trim()
+    .toLowerCase();
+
+  if (!email) {
+    return res.status(401).send({ message: "Unauthorized!" });
+  }
+
+  const result = await studioCollection
+    .find({
+      hostEmail: { $regex: `^${escapeRegex(email)}$`, $options: "i" },
+    })
+    .toArray();
   res.send(result);
 });
 
@@ -80,30 +113,130 @@ app.get("/featured-studios", async (req, res) => {
 
 app.get("/studios/:id", async (req, res) => {
   const { id } = req.params;
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(404).send({ message: "Studio not found." });
+  }
+
   const result = await studioCollection.findOne({ _id: new ObjectId(id) });
+
+  if (!result) {
+    return res.status(404).send({ message: "Studio not found." });
+  }
+
   res.send(result);
 });
 
 app.patch("/studios/:id", verifyToken, async (req, res) => {
   const { id } = req.params;
-  const data = req.body;
+  const email = String(req.user?.email ?? "")
+    .trim()
+    .toLowerCase();
+
+  if (!email) {
+    return res.status(401).send({ message: "Unauthorized!" });
+  }
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(404).send({ message: "Studio not found." });
+  }
+
+  const studio = await studioCollection.findOne({ _id: new ObjectId(id) });
+
+  if (!studio) {
+    return res.status(404).send({ message: "Studio not found." });
+  }
+
+  if (
+    String(studio.hostEmail ?? "")
+      .trim()
+      .toLowerCase() !== email
+  ) {
+    return res
+      .status(403)
+      .send({ message: "You can only edit your own studios." });
+  }
+
+  const data = { ...req.body, hostEmail: email };
+  delete data._id;
+
   const result = await studioCollection.updateOne(
     { _id: new ObjectId(id) },
     { $set: data },
   );
+
   res.json(result);
 });
 
 app.delete("/studios/:id", verifyToken, async (req, res) => {
   const { id } = req.params;
+  const email = String(req.user?.email ?? "")
+    .trim()
+    .toLowerCase();
+
+  if (!email) {
+    return res.status(401).send({ message: "Unauthorized!" });
+  }
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(404).send({ message: "Studio not found." });
+  }
+
+  const studio = await studioCollection.findOne({ _id: new ObjectId(id) });
+
+  if (!studio) {
+    return res.status(404).send({ message: "Studio not found." });
+  }
+
+  if (
+    String(studio.hostEmail ?? "")
+      .trim()
+      .toLowerCase() !== email
+  ) {
+    return res
+      .status(403)
+      .send({ message: "You can only delete your own studios." });
+  }
+
   const result = await studioCollection.deleteOne({ _id: new ObjectId(id) });
   res.json(result);
 });
 
 app.post("/booking", verifyToken, async (req, res) => {
   const data = req.body;
+  const email = String(req.user?.email ?? "")
+    .trim()
+    .toLowerCase();
+  const studioId = String(data?.studioId ?? "");
+
+  if (!email) {
+    return res.status(401).send({ message: "Unauthorized!" });
+  }
+
+  if (!ObjectId.isValid(studioId)) {
+    return res.status(404).send({ message: "Studio not found." });
+  }
+
+  const studio = await studioCollection.findOne({
+    _id: new ObjectId(studioId),
+  });
+
+  if (!studio) {
+    return res.status(404).send({ message: "Studio not found." });
+  }
+
+  if (
+    String(studio.hostEmail ?? "")
+      .trim()
+      .toLowerCase() === email
+  ) {
+    return res
+      .status(403)
+      .send({ message: "You cannot book your own studio." });
+  }
+
   const booking = await bookingCollection.findOne({
-    studioId: data.studioId,
+    studioId,
     bookingDate: data.bookingDate,
     status: { $ne: "cancelled" },
     $expr: {
@@ -120,7 +253,12 @@ app.post("/booking", verifyToken, async (req, res) => {
     });
   }
 
-  const result = await bookingCollection.insertOne(data);
+  const result = await bookingCollection.insertOne({
+    ...data,
+    studioId,
+    email,
+    userEmail: email,
+  });
   res.send(result);
 });
 
