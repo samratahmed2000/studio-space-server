@@ -263,14 +263,64 @@ app.post("/booking", verifyToken, async (req, res) => {
 });
 
 app.get("/my-bookings/:email", verifyToken, async (req, res) => {
-  const { email } = req.params;
-  const result = await bookingCollection.find({ email: email }).toArray();
+  const email = String(req.user?.email ?? "")
+    .trim()
+    .toLowerCase();
+  const requestedEmail = String(req.params.email ?? "")
+    .trim()
+    .toLowerCase();
+
+  if (!email) {
+    return res.status(401).send({ message: "Unauthorized!" });
+  }
+
+  if (requestedEmail !== email) {
+    return res
+      .status(403)
+      .send({ message: "You can only view your own bookings." });
+  }
+
+  const result = await bookingCollection
+    .find({ email: requestedEmail })
+    .toArray();
   res.send(result);
 });
 
 app.patch("/my-bookings/:id", verifyToken, async (req, res) => {
   const { id } = req.params;
-  const data = req.body;
+  const email = String(req.user?.email ?? "")
+    .trim()
+    .toLowerCase();
+
+  if (!email) {
+    return res.status(401).send({ message: "Unauthorized!" });
+  }
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(404).send({ message: "Booking not found." });
+  }
+
+  const booking = await bookingCollection.findOne({ _id: new ObjectId(id) });
+
+  if (!booking) {
+    return res.status(404).send({ message: "Booking not found." });
+  }
+
+  const ownerEmail = String(booking.email ?? booking.userEmail ?? "")
+    .trim()
+    .toLowerCase();
+
+  if (ownerEmail !== email) {
+    return res
+      .status(403)
+      .send({ message: "You can only update your own bookings." });
+  }
+
+  const data = { ...req.body };
+  delete data._id;
+  delete data.email;
+  delete data.userEmail;
+
   const result = await bookingCollection.updateOne(
     { _id: new ObjectId(id) },
     { $set: data },
@@ -280,6 +330,34 @@ app.patch("/my-bookings/:id", verifyToken, async (req, res) => {
 
 app.delete("/my-bookings/:id", verifyToken, async (req, res) => {
   const { id } = req.params;
+  const email = String(req.user?.email ?? "")
+    .trim()
+    .toLowerCase();
+
+  if (!email) {
+    return res.status(401).send({ message: "Unauthorized!" });
+  }
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(404).send({ message: "Booking not found." });
+  }
+
+  const booking = await bookingCollection.findOne({ _id: new ObjectId(id) });
+
+  if (!booking) {
+    return res.status(404).send({ message: "Booking not found." });
+  }
+
+  const ownerEmail = String(booking.email ?? booking.userEmail ?? "")
+    .trim()
+    .toLowerCase();
+
+  if (ownerEmail !== email) {
+    return res
+      .status(403)
+      .send({ message: "You can only remove your own bookings." });
+  }
+
   const result = await bookingCollection.deleteOne({ _id: new ObjectId(id) });
   res.send(result);
 });
