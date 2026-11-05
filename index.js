@@ -27,10 +27,25 @@ const db = connectedClient.db("studioSpace");
 const categoryCollection = db.collection("categories");
 const studioCollection = db.collection("studios");
 const bookingCollection = db.collection("bookings");
+const studioRatings = db.collection("ratings");
 const savedStudioCollection = db.collection("wishlist");
 
 const escapeRegex = (value) =>
   String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const attachStudioRatings = [
+  {
+    $lookup: {
+      from: "ratings",
+      let: { studioId: { $toString: "$_id" } },
+      pipeline: [
+        { $match: { $expr: { $eq: ["$studioId", "$$studioId"] } } },
+        { $project: { _id: 0, rating: 1 } },
+      ],
+      as: "ratings",
+    },
+  },
+];
 
 // Middleware
 const verifyToken = async (req, res, next) => {
@@ -54,6 +69,25 @@ const verifyToken = async (req, res, next) => {
   } catch (error) {
     return res.status(401).send({ message: "Invalid or Expired Token." });
   }
+};
+
+const verifyOptionalToken = async (req, res, next) => {
+  const token = req.headers.authorization?.split(" ")[1];
+
+  if (!token) {
+    return next();
+  }
+
+  const JWKS = createRemoteJWKSet(
+    new URL(`${process.env.CLIENT_URL}/api/auth/jwks`),
+  );
+
+  try {
+    const { payload } = await jwtVerify(token, JWKS);
+    req.user = payload;
+  } catch (error) {}
+
+  next();
 };
 
 app.get("/categories", async (req, res) => {
@@ -81,7 +115,9 @@ app.post("/add-studio", verifyToken, async (req, res) => {
 });
 
 app.get("/studios", async (req, res) => {
-  const result = await studioCollection.find().toArray();
+  const result = await studioCollection
+    .aggregate(attachStudioRatings)
+    .toArray();
   res.send(result);
 });
 
@@ -102,13 +138,118 @@ app.get("/my-studios", verifyToken, async (req, res) => {
   res.send(result);
 });
 
-app.get("/featured-studios", async (req, res) => {
+app.get("/featured-studios", verifyOptionalToken, async (req, res) => {
+  const email = String(req.user?.email ?? "")
+    .trim()
+    .toLowerCase();
+
+  const query = email
+    ? {
+        hostEmail: {
+          $not: { $regex: `^${escapeRegex(email)}$`, $options: "i" },
+        },
+      }
+    : {};
+
   const result = await studioCollection
-    .find()
-    .sort({ hourlyRate: -1 })
-    .limit(6)
+    .aggregate([
+      { $match: query },
+      { $sort: { hourlyRate: -1 } },
+      { $limit: 6 },
+      ...attachStudioRatings,
+    ])
     .toArray();
   res.send(result);
+});
+
+app.get("/ratings/:studioId", verifyOptionalToken, async (req, res) => {
+  const { studioId } = req.params;
+
+  if (!ObjectId.isValid(studioId)) {
+    return res.status(404).send({ message: "Studio not found." });
+  }
+
+  const ratings = await studioRatings
+    .find({ studioId })
+    .sort({ createdAt: -1 })
+    .project({ _id: 1, userName: 1, rating: 1, createdAt: 1 })
+    .toArray();
+
+  const email = String(req.user?.email ?? "")
+    .trim()
+    .toLowerCase();
+
+  const viewerRating = email
+    ? ((
+        await studioRatings.findOne(
+          { studioId, email },
+          { projection: { rating: 1 } },
+        )
+      )?.rating ?? null)
+    : null;
+
+  res.send({ ratings, viewerRating });
+});
+
+app.post("/ratings", verifyToken, async (req, res) => {
+  const email = String(req.user?.email ?? "")
+    .trim()
+    .toLowerCase();
+  const studioId = String(req.body?.studioId ?? "");
+  const rating = Number(req.body?.rating);
+  const userName = String(req.body?.userName ?? req.user?.name ?? "").trim();
+
+  if (!email) {
+    return res.status(401).send({ message: "Unauthorized!" });
+  }
+
+  if (!ObjectId.isValid(studioId)) {
+    return res.status(404).send({ message: "Studio not found." });
+  }
+
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+    return res
+      .status(400)
+      .send({ message: "Rating must be a whole number between 1 and 5." });
+  }
+
+  const studio = await studioCollection.findOne({
+    _id: new ObjectId(studioId),
+  });
+
+  if (!studio) {
+    return res.status(404).send({ message: "Studio not found." });
+  }
+
+  if (
+    String(studio.hostEmail ?? "")
+      .trim()
+      .toLowerCase() === email
+  ) {
+    return res
+      .status(403)
+      .send({ message: "You cannot rate your own studio." });
+  }
+
+  const existingRating = await studioRatings.findOne({ studioId, email });
+
+  if (existingRating) {
+    return res
+      .status(409)
+      .send({ message: "You have already rated this studio." });
+  }
+
+  const now = new Date().toISOString();
+
+  await studioRatings.insertOne({
+    studioId,
+    email,
+    userName,
+    rating,
+    createdAt: now,
+  });
+
+  res.send({ rating });
 });
 
 app.get("/studios/:id", async (req, res) => {
@@ -235,10 +376,16 @@ app.post("/booking", verifyToken, async (req, res) => {
       .send({ message: "You cannot book your own studio." });
   }
 
+  if (!data?.bookingDate || !data?.startTime || !data?.endTime) {
+    return res.status(400).send({
+      message: "Booking date, start time and end time are required.",
+    });
+  }
+
   const booking = await bookingCollection.findOne({
     studioId,
     bookingDate: data.bookingDate,
-    status: { $ne: "cancelled" },
+    status: { $regex: "^confirmed$", $options: "i" },
     $expr: {
       $and: [
         { $lt: ["$startTime", data.endTime] },
@@ -249,7 +396,7 @@ app.post("/booking", verifyToken, async (req, res) => {
 
   if (booking) {
     return res.status(409).send({
-      message: "This studio is already booked for the selected time.",
+      message: `This studio already has a confirmed booking that overlaps ${data.startTime} - ${data.endTime} on ${data.bookingDate}. Please choose a different time slot.`,
     });
   }
 
